@@ -1,8 +1,12 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uuid
 import logging
-from datetime import datetime
+import json
+import redis
+from datetime import datetime, timedelta
+from pathlib import Path
 from models import TaskResponse, TaskDetail, TaskStatus
 from tasks import process_image_to_music, tasks_store
 from config import get_settings
@@ -16,9 +20,23 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# 初始化 Redis
+try:
+    redis_client = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=settings.REDIS_DB,
+        decode_responses=True
+    )
+    redis_client.ping()
+    logger.info("Redis 连接成功")
+except Exception as e:
+    logger.warning(f"Redis 连接失败: {e}，分享功能将不可用")
+    redis_client = None
+
 app = FastAPI(
     title="MelodySnap API",
-    description="图片转音乐 API 服务 (Gemini 3 Pro Preview + Suno V5)",
+    description="图片转音乐 API 服务 (Gemini 3 Pro Preview + Google Lyria)",
     version="2.0.0"
 )
 
@@ -31,6 +49,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 创建 static 目录并挂载静态文件服务
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -38,7 +61,7 @@ async def startup_event():
     logger.info("=" * 50)
     logger.info(f"MelodySnap API 启动")
     logger.info(f"Gemini 模型: {settings.GEMINI_MODEL}")
-    logger.info(f"Suno 模型: {settings.SUNO_MODEL}")
+    logger.info(f"Lyria 模型: lyria-realtime-exp")
     logger.info(f"环境: {settings.ENV}")
     logger.info("=" * 50)
 
@@ -49,7 +72,7 @@ async def generate_music(
     image: UploadFile = File(...)
 ):
     """
-    上传图片，使用 Gemini 3 Pro Preview 分析并通过 Suno V5 生成音乐
+    上传图片，使用 Gemini 3 Pro Preview 分析并通过 Google Lyria 生成音乐
     
     - **image**: 图片文件（支持 jpg, png, webp）
     
@@ -89,12 +112,13 @@ async def generate_music(
         "status": TaskStatus.PENDING,
         "gemini_config": None,
         "music_url": None,
+        "image_url": None,
         "error": None,
         "created_at": now,
         "updated_at": now,
         "model_info": {
             "gemini": settings.GEMINI_MODEL,
-            "suno": settings.SUNO_MODEL
+            "lyria": "lyria-realtime-exp"
         }
     }
     
@@ -106,10 +130,10 @@ async def generate_music(
     return TaskResponse(
         task_id=task_id,
         status=TaskStatus.PENDING,
-        message="任务已创建，正在使用 Gemini 3 Pro Preview 和 Suno V5 处理中",
+        message="任务已创建，正在使用 Gemini 3 Pro Preview 和 Google Lyria 处理中",
         model_info={
             "gemini": settings.GEMINI_MODEL,
-            "suno": settings.SUNO_MODEL
+            "lyria": "lyria-realtime-exp"
         }
     )
 
@@ -138,19 +162,101 @@ async def delete_task(task_id: str):
     return {"message": "任务已删除"}
 
 
+@app.post("/api/share/{task_id}")
+async def create_share(task_id: str):
+    """
+    创建分享链接
+    
+    - **task_id**: 任务 ID
+    
+    将音乐数据保存到 Redis，返回分享 URL（有效期 7 天）
+    """
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="分享功能暂时不可用")
+    
+    if task_id not in tasks_store:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    task = tasks_store[task_id]
+    
+    if task["status"] != TaskStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="任务还未完成")
+    
+    # 准备分享数据
+    share_data = {
+        "music_url": task["music_url"],
+        "music_info": task.get("gemini_config", {}),
+        "model_info": task.get("model_info", {}),
+        "created_at": datetime.now().isoformat(),
+        "task_id": task_id
+    }
+    
+    # 存储到 Redis（7天过期）
+    expire_seconds = settings.SHARE_EXPIRE_DAYS * 24 * 3600
+    redis_client.setex(
+        f"share:{task_id}",
+        expire_seconds,
+        json.dumps(share_data)
+    )
+    
+    logger.info(f"创建分享链接: {task_id}")
+    
+    return {
+        "share_id": task_id,
+        "share_url": f"/share/{task_id}",
+        "expires_in_days": settings.SHARE_EXPIRE_DAYS,
+        "expires_at": (datetime.now() + timedelta(days=settings.SHARE_EXPIRE_DAYS)).isoformat()
+    }
+
+
+@app.get("/api/share/{share_id}")
+async def get_share_data(share_id: str):
+    """
+    获取分享的音乐数据
+    
+    - **share_id**: 分享 ID（即 task_id）
+    """
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="分享功能暂时不可用")
+    
+    # 从 Redis 获取数据
+    data = redis_client.get(f"share:{share_id}")
+    
+    if not data:
+        raise HTTPException(status_code=404, detail="分享不存在或已过期")
+    
+    share_data = json.loads(data)
+    
+    # 记录访问（可选：统计播放次数）
+    redis_client.incr(f"share:views:{share_id}")
+    
+    logger.info(f"访问分享: {share_id}")
+    
+    return share_data
+
+
 @app.get("/health")
 async def health_check():
     """健康检查"""
+    redis_status = "ok" if redis_client else "unavailable"
+    try:
+        if redis_client:
+            redis_client.ping()
+    except:
+        redis_status = "error"
+    
     return {
         "status": "ok",
         "tasks_count": len(tasks_store),
+        "redis_status": redis_status,
         "models": {
             "gemini": settings.GEMINI_MODEL,
-            "suno": settings.SUNO_MODEL
+            "lyria": "lyria-realtime-exp"
         },
         "configuration": {
             "gemini_configured": bool(settings.GEMINI_API_KEY),
-            "suno_configured": bool(settings.SUNO_API_TOKEN)
+            "google_api_configured": bool(settings.GOOGLE_API_KEY),
+            "redis_configured": bool(redis_client)
         }
     }
 
@@ -163,7 +269,7 @@ async def root():
         "version": "2.0.0",
         "models": {
             "gemini": settings.GEMINI_MODEL,
-            "suno": settings.SUNO_MODEL
+            "lyria": "lyria-realtime-exp"
         },
         "docs": "/docs",
         "health": "/health"

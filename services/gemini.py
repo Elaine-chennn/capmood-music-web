@@ -3,7 +3,9 @@ from PIL import Image
 import json
 import io
 import logging
+import time
 from pathlib import Path
+from datetime import datetime
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -29,13 +31,13 @@ class GeminiService:
     
     async def analyze_image(self, image_data: bytes) -> dict:
         """
-        使用 Gemini 3 Pro Preview 分析图片并生成 Suno V5 配置
+        使用 Gemini 3 Pro Preview 分析图片并生成音乐配置
         
         Args:
             image_data: 图片二进制数据
             
         Returns:
-            dict: Suno V5 API 所需的配置
+            dict: 音乐生成配置
             
         Raises:
             ValueError: JSON 解析失败
@@ -44,14 +46,44 @@ class GeminiService:
         try:
             # 打开图片
             image = Image.open(io.BytesIO(image_data))
-            logger.info(f"图片尺寸: {image.size}, 格式: {image.format}")
+            original_size = image.size
+            logger.info(f"原始图片尺寸: {original_size}, 格式: {image.format}")
+            
+            # 智能 Resize 图片以优化 API 调用
+            # Gemini 推荐的图片尺寸为 768-2048 像素之间
+            max_size = settings.IMAGE_RESIZE_MAX
+            
+            # 只有当图片超过最大尺寸时才缩放
+            if max(image.size) > max_size:
+                # 保持宽高比进行缩放
+                ratio = max_size / max(image.size)
+                new_size = tuple(int(dim * ratio) for dim in image.size)
+                image = image.resize(new_size, Image.Resampling.LANCZOS)
+                logger.info(f"图片已缩放: {original_size} → {new_size}")
+                
+                # 计算缩放后的图片大小
+                resized_buffer = io.BytesIO()
+                image.save(resized_buffer, format=image.format or 'JPEG', quality=85)
+                resized_size = len(resized_buffer.getvalue())
+                logger.info(f"缩放后图片大小: {resized_size} bytes ({resized_size/1024:.2f} KB)")
+            else:
+                logger.info(f"图片尺寸合适，无需缩放 (最大边: {max(image.size)}px <= {max_size}px)")
             
             # 调用 Gemini 3 Pro Preview
             logger.info(f"调用 {settings.GEMINI_MODEL} 分析图片...")
-            response = self.model.generate_content([
-                self.system_prompt,
-                image
-            ])
+            start_time = time.time()
+            
+            # 设置生成配置
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.8,
+            )
+            
+            response = self.model.generate_content(
+                [self.system_prompt, image],
+                generation_config=generation_config
+            )
+            gemini_time = time.time() - start_time
+            logger.info(f"⏱️  Gemini API 响应时间: {gemini_time:.2f} 秒")
             
             # 清理 Markdown 标记
             text = response.text.strip()
@@ -70,28 +102,64 @@ class GeminiService:
             # 解析 JSON
             config = json.loads(text)
             
-            # 验证必需字段
-            required_fields = ['prompt', 'style', 'title', 'vocalGender']
-            missing_fields = [f for f in required_fields if f not in config]
-            if missing_fields:
-                raise ValueError(f"缺少必需字段: {', '.join(missing_fields)}")
+            # 保存完整的 Gemini 返回内容到单独的日志文件
+            gemini_log_path = Path("logs/gemini_responses.log")
+            gemini_log_path.parent.mkdir(exist_ok=True)
             
-            # 强制设置为 V5 模型
-            config['customMode'] = True
-            config['instrumental'] = False
-            config['model'] = settings.SUNO_MODEL  # 确保是 V5
+            with open(gemini_log_path, 'a', encoding='utf-8') as f:
+                f.write("\n" + "="*80 + "\n")
+                f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("="*80 + "\n")
+                f.write(json.dumps(config, indent=2, ensure_ascii=False))
+                f.write("\n" + "="*80 + "\n\n")
             
-            # 验证并标准化 vocalGender 格式为 m/f
-            if config['vocalGender'] not in ['male', 'female', 'm', 'f']:
-                config['vocalGender'] = 'f'  # 默认值
+            logger.info(f"Gemini 返回内容已保存至: {gemini_log_path}")
             
-            # 标准化为 m/f 格式（Suno API 要求）
-            if config['vocalGender'] == 'male':
-                config['vocalGender'] = 'm'
-            elif config['vocalGender'] == 'female':
-                config['vocalGender'] = 'f'
+            # 打印详细的分析结果
+            logger.info("="*60)
+            logger.info("Gemini 3 分析结果详情")
+            logger.info("="*60)
+            logger.info(f"标题 (title): {config.get('title', 'N/A')}")
+            logger.info(f"人声性别 (vocalGender): {config.get('vocalGender', 'N/A')}")
             
-            logger.info(f"✓ Gemini 分析完成 - 标题: {config.get('title')}, 模型: {config.get('model')}")
+            # 解析 style 字段
+            style = config.get('style', '')
+            logger.info(f"\n音乐风格 (style):")
+            logger.info(f"  完整内容: {style}")
+            if style:
+                components = style.split(", ")
+                logger.info(f"  包含元素:")
+                for comp in components:
+                    if "BPM" in comp:
+                        logger.info(f"    - {comp:30s} ← 节奏速度")
+                    elif "Vocal" in comp:
+                        logger.info(f"    - {comp:30s} ← 人声风格")
+                    elif any(word in comp for word in ["Guitar", "Piano", "Synth", "Strings", "Pad", "Drum"]):
+                        logger.info(f"    - {comp:30s} ← 乐器")
+                    elif any(word in comp for word in ["Pop", "Rock", "Jazz", "Electronic", "Cinematic", "Ambient"]):
+                        logger.info(f"    - {comp:30s} ← 音乐流派")
+                    else:
+                        logger.info(f"    - {comp:30s} ← 情绪/氛围")
+            
+            # 打印歌词结构
+            prompt = config.get('prompt', '')
+            logger.info(f"\n歌词内容 (prompt):")
+            if prompt:
+                lines = prompt.split('\n')
+                verse_count = prompt.count('[Verse]')
+                chorus_count = prompt.count('[Chorus]')
+                logger.info(f"  结构: {verse_count} 个 [Verse], {chorus_count} 个 [Chorus]")
+                logger.info(f"  总行数: {len([l for l in lines if l.strip()])}")
+                logger.info(f"  前3行预览: {' / '.join(lines[:3])}")
+            
+            # 打印可选参数
+            logger.info(f"\n可选参数:")
+            logger.info(f"  styleWeight: {config.get('styleWeight', 0.65)}")
+            logger.info(f"  weirdnessConstraint: {config.get('weirdnessConstraint', 0.65)}")
+            logger.info(f"  audioWeight: {config.get('audioWeight', 0.65)}")
+            logger.info("="*60)
+            
+            logger.info(f"✓ Gemini 分析完成 - 标题: {config.get('title')}")
             return config
             
         except json.JSONDecodeError as e:
