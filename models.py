@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # pyright: ignore[reportMissingImports]
 from typing import Optional, Literal
 from enum import Enum
 
@@ -47,6 +47,8 @@ class TaskDetail(BaseModel):
     """任务详情"""
     task_id: str
     status: TaskStatus
+    message: Optional[str] = None  # 状态消息，用于前端显示进度
+    analysis_result: Optional[dict] = None  # Gemini 分析结果，包含 tags、title、style 等
     gemini_config: Optional[SunoConfig] = None
     music_url: Optional[str] = None
     error: Optional[str] = None

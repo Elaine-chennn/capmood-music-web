@@ -29,16 +29,26 @@ async def process_image_to_music(task_id: str, image_data: bytes):
     try:
         # 步骤1: Gemini 分析图片
         logger.info(f"[Task {task_id}] 步骤1: 调用 Gemini 分析图片")
+        tasks_store[task_id]["message"] = "Analyzing your photo..."
+        
         gemini_config = await gemini_service.analyze_image(image_data)
+        
+        # 存储分析结果并更新状态信息
         tasks_store[task_id]["gemini_config"] = gemini_config
+        tasks_store[task_id]["message"] = "Vibe detected! Composing melody..."
+        tasks_store[task_id]["analysis_result"] = gemini_config # Explicitly expose for frontend
+        tasks_store[task_id]["updated_at"] = datetime.now().isoformat()
+        
         logger.info(f"[Task {task_id}] Gemini 分析完成: {gemini_config.get('title')}")
         
         # 步骤2: Suno 生成音乐
         logger.info(f"[Task {task_id}] 步骤2: 调用 Suno 生成音乐")
+        tasks_store[task_id]["message"] = "AI Band is performing..."
         music_url = await suno_service.generate_music(gemini_config)
         
         # 更新为完成状态
         tasks_store[task_id]["status"] = TaskStatus.COMPLETED
+        tasks_store[task_id]["message"] = "Composition complete!"
         tasks_store[task_id]["music_url"] = music_url
         tasks_store[task_id]["updated_at"] = datetime.now().isoformat()
         logger.info(f"[Task {task_id}] 任务完成: {music_url}")

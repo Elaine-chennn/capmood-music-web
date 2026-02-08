@@ -3,6 +3,7 @@ import logging
 import asyncio
 from typing import Dict, Any
 from config import get_settings
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -17,6 +18,12 @@ class SunoService:
         self.model = settings.SUNO_MODEL
         logger.info(f"初始化 Suno 服务，模型: {self.model}")
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, ConnectionError)),
+        reraise=True
+    )
     async def generate_music(self, config: Dict[str, Any]) -> str:
         """
         调用 Suno V5 API 生成音乐
@@ -31,6 +38,7 @@ class SunoService:
             Exception: API 调用失败
         """
         try:
+            logger.info(f"尝试调用 Suno API（重试机制已启用）")
             # 确保使用 V5 模型
             config['model'] = self.model
             
@@ -101,13 +109,12 @@ class SunoService:
             logger.error(f"Suno 服务错误: {str(e)}")
             raise
     
-    async def _poll_task_result(self, task_id: str, max_attempts: int = 60) -> str:
+    async def _poll_task_result(self, task_id: str) -> str:
         """
-        轮询任务结果
+        轮询任务结果（使用指数退避策略）
         
         Args:
             task_id: 任务 ID
-            max_attempts: 最大尝试次数
             
         Returns:
             str: 音乐文件 URL
@@ -116,13 +123,16 @@ class SunoService:
         base_url = self.api_url.replace('/generate', '')
         detail_url = f"{base_url}/generate/record-info"
         
-        logger.info(f"开始轮询任务: {task_id}")
+        # 指数退避策略：2s, 3s, 5s, 5s, 8s, 10s, 10s, 15s, 15s, 20s (总共约95秒)
+        delays = [2, 3, 5, 5, 8, 10, 10, 15, 15, 20]
+        
+        logger.info(f"开始轮询任务: {task_id}（使用指数退避策略）")
         logger.debug(f"查询端点: {detail_url}")
         
         async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-            for i in range(max_attempts):
+            for i, delay in enumerate(delays):
                 try:
-                    logger.debug(f"发送查询请求 [第{i+1}次]: taskId={task_id}")
+                    logger.debug(f"发送查询请求 [第{i+1}/{len(delays)}次]: taskId={task_id}")
                     
                     # 使用 GET 方法，taskId 作为查询参数
                     response = await client.get(
@@ -171,10 +181,13 @@ class SunoService:
                     else:
                         logger.warning(f"HTTP状态码: {response.status_code}, 响应: {response.text[:200]}")
                     
-                    await asyncio.sleep(5)  # 每 5 秒轮询一次
+                    # 使用指数退避延迟
+                    logger.debug(f"等待 {delay} 秒后重试...")
+                    await asyncio.sleep(delay)
                     
                 except Exception as e:
-                    logger.warning(f"轮询失败 [{i+1}/{max_attempts}]: {str(e)}")
-                    await asyncio.sleep(5)
+                    logger.warning(f"轮询失败 [{i+1}/{len(delays)}]: {str(e)}")
+                    await asyncio.sleep(delay)
             
-            raise Exception(f"轮询超时：任务 {task_id} 在 {max_attempts * 5} 秒内未完成")
+            total_time = sum(delays)
+            raise Exception(f"轮询超时：任务 {task_id} 在 {total_time} 秒内未完成")

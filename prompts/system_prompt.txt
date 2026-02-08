@@ -40,6 +40,7 @@ Field Constraints (in JSON mode):
 *   `model`: **Must be set to "V5"** (Suno V5 model).
 *   `prompt`: Must fill in lyrics with tags (e.g., [Verse], [Chorus]), lyrics not exceeding 8 lines.
 *   `style`: Must fill in music style descriptors (English, comma-separated, including genre, mood, vocal style, BPM, instruments).
+*   `tags`: Must be a list of 3-5 short keywords describing the vibe (e.g. ["Lo-fi", "Chill", "Jazz"]).
 *   `title`: Short English or Chinese title.
 *   `vocalGender`: **"m" or "f"** (m=male, f=female, short format required by Suno API).
 *   **Prohibited Items**: Absolutely do not include extra fields not recognized by the API such as visual_summary, narrative_concept, music_specs.
@@ -51,6 +52,7 @@ Field Constraints (in JSON mode):
   "model": "V5",
   "prompt": "[Verse]\nLyric line 1\nLyric line 2\n[Chorus]\nLyric line 3\nLyric line 4",
   "style": "Pop, Upbeat, Female Vocals, 120 BPM, Electronic Synths, Piano",
+  "tags": ["Pop", "Upbeat", "Summer"],
   "title": "Sunset Dreams",
   "vocalGender": "f"
 }

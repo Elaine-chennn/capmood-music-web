@@ -1,10 +1,11 @@
-import google.generativeai as genai
+import google.generativeai as genai  # pyright: ignore[reportMissingImports]
 from PIL import Image
 import json
 import io
 import logging
 from pathlib import Path
 from config import get_settings
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -27,6 +28,12 @@ class GeminiService:
         with open(prompt_path, 'r', encoding='utf-8') as f:
             return f.read()
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        reraise=True
+    )
     async def analyze_image(self, image_data: bytes) -> dict:
         """
         使用 Gemini 3 Pro Preview 分析图片并生成 Suno V5 配置
@@ -42,6 +49,7 @@ class GeminiService:
             Exception: Gemini API 调用失败
         """
         try:
+            logger.info("开始调用 Gemini API 分析图片...")
             # 打开图片
             image = Image.open(io.BytesIO(image_data))
             logger.info(f"图片尺寸: {image.size}, 格式: {image.format}")

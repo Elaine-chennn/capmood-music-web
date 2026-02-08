@@ -1,10 +1,16 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form  # pyright: ignore[reportMissingImports]
+from fastapi.middleware.cors import CORSMiddleware  # pyright: ignore[reportMissingImports]
+from fastapi.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
+from fastapi.responses import FileResponse  # pyright: ignore[reportMissingImports]
 import uuid
+import os
 import logging
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
 from models import TaskResponse, TaskDetail, TaskStatus
 from tasks import process_image_to_music, tasks_store
+from services.video import VideoService
 from config import get_settings
 
 # 配置日志
@@ -32,15 +38,52 @@ app.add_middleware(
 )
 
 
+async def cleanup_old_files():
+    """
+    定时清理过期的视频文件
+    
+    - 默认清理超过24小时的视频文件
+    - 每小时执行一次清理
+    """
+    while True:
+        try:
+            cutoff = datetime.now() - timedelta(hours=24)
+            deleted_count = 0
+            
+            if VIDEOS_DIR.exists():
+                for file in VIDEOS_DIR.glob("*.mp4"):
+                    try:
+                        file_time = datetime.fromtimestamp(file.stat().st_mtime)
+                        if file_time < cutoff:
+                            file.unlink()
+                            deleted_count += 1
+                            logger.info(f"已删除过期视频: {file.name}")
+                    except Exception as e:
+                        logger.error(f"删除文件失败 {file.name}: {str(e)}")
+            
+            if deleted_count > 0:
+                logger.info(f"文件清理完成，共删除 {deleted_count} 个过期视频")
+            
+        except Exception as e:
+            logger.error(f"文件清理任务出错: {str(e)}")
+        
+        # 每小时执行一次
+        await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def startup_event():
-    """启动时显示配置信息"""
+    """启动时显示配置信息并启动后台清理任务"""
     logger.info("=" * 50)
     logger.info(f"MelodySnap API 启动")
     logger.info(f"Gemini 模型: {settings.GEMINI_MODEL}")
     logger.info(f"Suno 模型: {settings.SUNO_MODEL}")
     logger.info(f"环境: {settings.ENV}")
     logger.info("=" * 50)
+    
+    # 启动文件清理后台任务
+    asyncio.create_task(cleanup_old_files())
+    logger.info("文件清理后台任务已启动（每小时清理一次超过24小时的视频）")
 
 
 @app.post("/api/generate-music", response_model=TaskResponse)
@@ -155,12 +198,71 @@ async def health_check():
     }
 
 
+@app.post("/api/generate-share-video")
+async def generate_share_video(
+    image: UploadFile = File(...),
+    audio_url: str = Form(...),
+    title: str = Form("Melody Snap Song"),
+    duration: int = Form(15),
+):
+    """
+    Generate a share video by composing an image with audio.
+    
+    - **image**: Card image (PNG from ViewShot)
+    - **audio_url**: URL to the music file
+    - **title**: Song title
+    - **duration**: Video duration in seconds (max 30)
+    
+    Returns the video file URL.
+    """
+    try:
+        logger.info(f"收到视频生成请求: title={title}, duration={duration}s")
+        
+        # Read image data
+        image_data = await image.read()
+        if len(image_data) > settings.MAX_IMAGE_SIZE:
+            raise HTTPException(status_code=400, detail="Image too large")
+        
+        # Clamp duration
+        duration = min(max(duration, 5), 30)
+        
+        # Generate video
+        video_service = VideoService()
+        video_path = await video_service.create_share_video(
+            image_data=image_data,
+            audio_url=audio_url,
+            title=title,
+            duration=duration,
+        )
+        
+        # Return video as a downloadable file
+        video_filename = os.path.basename(video_path)
+        video_url = f"/static/videos/{video_filename}"
+        
+        logger.info(f"视频生成完成: {video_url}")
+        return {
+            "status": "completed",
+            "video_url": video_url,
+            "video_filename": video_filename,
+        }
+        
+    except Exception as e:
+        logger.error(f"视频生成失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Video generation failed: {str(e)}")
+
+
+# Serve generated video files
+VIDEOS_DIR = Path(__file__).parent / "generated_videos"
+VIDEOS_DIR.mkdir(exist_ok=True)
+app.mount("/static/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
+
+
 @app.get("/")
 async def root():
     """API 信息"""
     return {
         "service": "MelodySnap API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "models": {
             "gemini": settings.GEMINI_MODEL,
             "suno": settings.SUNO_MODEL
@@ -171,5 +273,5 @@ async def root():
 
 
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn  # pyright: ignore[reportMissingImports]
     uvicorn.run(app, host="0.0.0.0", port=8000)
