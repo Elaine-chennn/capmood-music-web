@@ -11,8 +11,17 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class LyriaConfig(BaseModel):
+    """Google Lyria API 音乐生成配置"""
+    vocalization: bool = Field(..., description="是否使用人声演唱")
+    style: str = Field(..., description="音乐风格描述（包含流派、情绪、BPM、乐器、人声风格等）")
+    lyrics: Optional[str] = Field(default="", description="歌词（仅当 vocalization=true 时）")
+    title: str = Field(..., description="歌曲标题")
+    bpm: int = Field(..., description="节拍速度（40-180）", ge=40, le=180)
+
+
 class SunoConfig(BaseModel):
-    """Suno V5 API 请求配置"""
+    """Suno V5 API 请求配置（已弃用，保留用于兼容性）"""
     customMode: bool = True
     instrumental: bool = False  # 包含歌词
     model: Literal["V5"] = "V5"  # 强制使用 V5 模型
@@ -38,7 +47,7 @@ class TaskResponse(BaseModel):
     model_info: dict = Field(
         default={
             "gemini": "gemini-3-flash-preview",
-            "suno": "V5"
+            "lyria": "lyria-realtime-exp"
         }
     )
 
@@ -47,14 +56,17 @@ class TaskDetail(BaseModel):
     """任务详情"""
     task_id: str
     status: TaskStatus
-    gemini_config: Optional[SunoConfig] = None
+    title: Optional[str] = None  # 只返回歌曲标题
     music_url: Optional[str] = None
+    image_url: Optional[str] = None  # 添加照片URL字段
     error: Optional[str] = None
+    message: Optional[str] = None  # 前端进度消息
+    analysis_result: Optional[dict] = None  # Gemini 分析结果 (title, style, tags)
     created_at: str
     updated_at: str
     model_info: dict = Field(
         default={
             "gemini": "gemini-3-flash-preview",
-            "suno": "V5"
+            "lyria": "lyria-realtime-exp"
         }
     )

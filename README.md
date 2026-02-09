@@ -1,6 +1,13 @@
 # MelodySnap Backend
 
-基于 Gemini 3 Pro Preview 和 Suno V5 的图片转音乐后端服务。
+基于 **Gemini 3 Pro Preview** 和 **Google Lyria 实时音乐生成 API** 的图片转音乐后端服务。
+
+## ✨ 特性
+
+- 🎨 **图片分析**: 使用 Gemini 3 分析图片情绪、色彩、主题
+- 🎵 **实时音乐生成**: Google Lyria 实时流式生成高质量器乐
+- ⚡ **快速响应**: WebSocket 流式传输，边生成边接收
+- 🔧 **简单配置**: 仅需 Google API Key，无需复杂的云服务配置
 
 ## 快速开始
 
@@ -21,9 +28,12 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 ```env
-GEMINI_API_KEY=your_actual_gemini_api_key
-SUNO_API_TOKEN=your_actual_suno_token
+GEMINI_API_KEY=your_gemini_api_key
+GOOGLE_API_KEY=your_google_api_key
 ```
+
+**获取 API Key**:
+- 访问 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取 API Key
 
 ### 3. 启动服务
 
@@ -259,3 +269,8 @@ MIT License
 ## 维护者
 
 GitHub Copilot
+
+
+## additional
+the link generate music:
+https://musicfile.removeai.ai/ZTQxYjI3MmUtZTZlMy00NTA3LWJmZDQtNzBiMTk1ODIwN2Zi.mp3
