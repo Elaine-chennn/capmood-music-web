@@ -60,6 +60,8 @@ class TaskDetail(BaseModel):
     music_url: Optional[str] = None
     image_url: Optional[str] = None  # 添加照片URL字段
     error: Optional[str] = None
+    message: Optional[str] = None  # 前端进度消息
+    analysis_result: Optional[dict] = None  # Gemini 分析结果 (title, style, tags)
     created_at: str
     updated_at: str
     model_info: dict = Field(

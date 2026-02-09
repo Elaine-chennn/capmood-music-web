@@ -31,16 +31,23 @@ Phase 2: Core Generation - Execute only after Phase 1 passes
     *   If `vocalization: true`, add **Vocal Style** (e.g., "Male Vocals", "Female Vocals", "Ethereal Vocals")
     *   **Format**: Comma-separated English descriptors, e.g., "Indie Pop, Uplifting, Warm, 110 BPM, Acoustic Guitar, Female Vocals, Piano"
     *   *Store the complete descriptor in the `style` field.*
-4.  **Lyrics Creation** (Conditional):
+4.  **Tags Creation** (REQUIRED):
+    *   Select 3-5 short, catchy **vibe keywords** that capture the overall mood/genre.
+    *   Tags are displayed to the user as badges in the UI — they must be short (1-2 words each), human-friendly, and describe the vibe, NOT technical details.
+    *   Pick from genres, moods, and aesthetic descriptors. Avoid instruments, BPM numbers, or audio effects.
+    *   Good examples: "Lo-fi", "Chill", "Dreamy", "Indie", "Summer", "Ethereal", "Upbeat", "Retro", "Cinematic", "Groovy"
+    *   Bad examples: "128 BPM", "Synthesizer", "Reverb", "Sidechain Compression"
+    *   *Store as a JSON array of strings in the `tags` field.*
+5.  **Lyrics Creation** (Conditional):
     *   **If `vocalization: true`**: Write short, poetic lyrics (4-8 lines) based on the visual narrative.
     *   Keep lyrics evocative and concise, avoid complex storytelling.
     *   Use simple verse structure, no tags like [Verse] or [Chorus].
     *   **If `vocalization: false`**: Set `lyrics` to empty string or null.
     *   *Store in the `lyrics` field.*
-5.  **Title Creation**:
+6.  **Title Creation**:
     *   Create a poetic, evocative English title (2-5 words) that captures the visual essence.
     *   *Store in the `title` field.*
-6.  **BPM Extraction**:
+7.  **BPM Extraction**:
     *   Extract the numeric BPM value from the style string.
     *   *Store in the `bpm` field as an integer (40-180).*
 
@@ -58,6 +65,7 @@ Field Constraints (in JSON mode):
     - 1-2 Audio Effects (optional)
     Example (instrumental): "Ambient Electronic, Downtempo, Dreamy, Nostalgic, 85 BPM, Synthesizer, Piano, Reverb, Warm Pads"
     Example (vocal): "Indie Pop, Uplifting, Warm, 110 BPM, Acoustic Guitar, Female Vocals, Piano, Reverb"
+*   `tags`: (REQUIRED) A JSON array of 3-5 short vibe keywords (1-2 words each). These are displayed as UI badges to the user. Pick catchy genre/mood/aesthetic descriptors only (e.g., ["Lo-fi", "Chill", "Jazz"]). Do NOT include instruments, BPM, or audio effects.
 *   `lyrics`: (CONDITIONAL) If vocalization=true, provide 4-8 lines of poetic lyrics in English. If false, set to empty string or null.
 *   `title`: (REQUIRED) Short English title (2-5 words), poetic and evocative.
 *   `bpm`: (REQUIRED) Integer between 40-180, must match the BPM mentioned in the `style` field.
@@ -69,6 +77,7 @@ Field Constraints (in JSON mode):
 {
   "vocalization": false,
   "style": "Cinematic Post-Rock, Dream Pop, Ethereal, Melancholic, 75 BPM, Electric Guitar, Synthesizer, Reverb, Atmospheric Strings",
+  "tags": ["Cinematic", "Ethereal", "Melancholic", "Post-Rock"],
   "lyrics": "",
   "title": "Echoes in Grey",
   "bpm": 75
@@ -78,6 +87,7 @@ Field Constraints (in JSON mode):
 {
   "vocalization": true,
   "style": "Indie Pop, Uplifting, Warm, Heartfelt, 105 BPM, Acoustic Guitar, Female Vocals, Piano, Soft Drums",
+  "tags": ["Indie Pop", "Uplifting", "Warm", "Heartfelt"],
   "lyrics": "Golden light upon your face\nMoments frozen in this space\nEvery smile, a gentle trace\nOf dreams we used to chase",
   "title": "Golden Hour",
   "bpm": 105
@@ -87,6 +97,7 @@ Field Constraints (in JSON mode):
 {
   "vocalization": false,
   "style": "Upbeat Electronic, House, Energetic, Vibrant, 128 BPM, Synthesizer, Bass, Drums, Sidechain Compression",
+  "tags": ["Electronic", "Upbeat", "Vibrant", "House"],
   "lyrics": "",
   "title": "Neon Pulse",
   "bpm": 128
